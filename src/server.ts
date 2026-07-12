@@ -406,6 +406,89 @@ app.get(
   }),
 );
 
+
+
+// USER DASHBOARD ANALYTICS ROUTE (User Only)
+// ==========================================
+app.get(
+  "/api/user/dashboard-analytics",
+  verifyToken,
+  userVerify,
+  asyncHandler(async (req, res) => {
+    const userId = req.user?.sub || req.user?.userId;
+
+  
+
+    if (!userId) {
+      return res.status(401).json({ error: true, message: "Unauthorized" });
+    }
+
+
+    const totalBookings = await bookingsCollection.countDocuments({ userId });
+    const pendingBookings = await bookingsCollection.countDocuments({ userId, status: "pending" });
+    const completedBookings = await bookingsCollection.countDocuments({ userId, status: "completed" });
+
+    const spentData = await bookingsCollection
+      .aggregate([
+        { $match: { userId, status: "completed" } },
+        { $group: { _id: null, totalSpent: { $sum: "$price" } } },
+      ])
+      .toArray();
+    const totalSpent = spentData[0]?.totalSpent || 0;
+
+    const monthlyExpense = await bookingsCollection
+      .aggregate([
+        { $match: { userId } },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+            amount: { $sum: "$price" },
+            count: { $sum: 1 }
+          },
+        },
+        { $sort: { _id: 1 } },
+        { $project: { month: "$_id", amount: 1, count: 1, _id: 0 } },
+      ])
+      .toArray();
+
+    const categoryAnalysis = await bookingsCollection
+      .aggregate([
+        { $match: { userId } },
+        {
+          $lookup: {
+            from: "services",
+            localField: "serviceId",
+            foreignField: "_id",
+            as: "service"
+          }
+        },
+        { $unwind: "$service" },
+        {
+          $group: {
+            _id: "$service.category",
+            value: { $sum: 1 }
+          }
+        },
+        { $project: { category: "$_id", value: 1, _id: 0 } }
+      ])
+      .toArray();
+
+    
+    res.json({
+      stats: {
+        totalBookings,
+        pendingBookings,
+        completedBookings,
+        totalSpent,
+      },
+      charts: {
+        monthlyExpense,    
+        categoryAnalysis   
+      }
+    });
+  }),
+);
+
 // ==========================================
 // DASHBOARD ANALYTICS ROUTE (Admin)
 // ==========================================
