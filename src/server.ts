@@ -1,12 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-import express, {
-  Request,
-  Response,
-  NextFunction,
-  RequestHandler,
-} from "express";
+import express, { Request, Response, NextFunction, RequestHandler } from "express";
 import cors from "cors";
 import { ObjectId, Document, Collection } from "mongodb";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose-cjs";
@@ -15,28 +10,30 @@ import { connectDB, closeDB } from "./config/db";
 const app = express();
 const port: string | number = process.env.PORT || 8000;
 
-
+// ==========================================
+// 🔒 ENV VALIDATION (fail fast, don't crash mysteriously later)
+// ==========================================
 const requiredEnvVars = ["MONGODB_URI", "DB_NAME", "CLIENT_URL"] as const;
 for (const key of requiredEnvVars) {
   if (!process.env[key]) {
-    console.error(` Missing required environment variable: ${key}`);
+    console.error(`❌ Missing required environment variable: ${key}`);
     process.exit(1);
   }
 }
 
 // ==========================================
-//  MIDDLEWARE
+// ⚙️ MIDDLEWARE
 // ==========================================
 app.use(
   cors({
     origin: process.env.CLIENT_URL, // restrict to your frontend only
     credentials: true,
-  }),
+  })
 );
 app.use(express.json());
 
 // ==========================================
-//  CUSTOM TYPES
+// 🧑 CUSTOM TYPES
 // ==========================================
 
 // Custom Request Interface to handle JWT Payload safely
@@ -54,14 +51,17 @@ const asyncHandler =
     fn: (
       req: AuthenticatedRequest,
       res: Response,
-      next: NextFunction,
-    ) => Promise<void | Response>,
+      next: NextFunction
+    ) => Promise<void | Response>
   ): RequestHandler =>
   (req, res, next) => {
     Promise.resolve(fn(req as AuthenticatedRequest, res, next)).catch(next);
   };
 
-
+// Validates a MongoDB ObjectId and sends a 400 response if invalid.
+// Written as a type guard (`id is string`) so that after calling this,
+// TypeScript narrows `id` to `string` wherever it was `string | string[] | undefined`
+// (Express 5 types route params this way).
 const validateObjectId = (id: unknown, res: Response): id is string => {
   if (typeof id !== "string" || !ObjectId.isValid(id)) {
     res.status(400).json({ error: true, message: "Invalid ID format" });
@@ -71,7 +71,7 @@ const validateObjectId = (id: unknown, res: Response): id is string => {
 };
 
 // ==========================================
-//  MONGODB COLLECTIONS
+// 🗄️ MONGODB COLLECTIONS
 // (populated once connectDB() resolves inside startServer())
 // ==========================================
 let usersCollection: Collection<Document>;
@@ -79,20 +79,20 @@ let servicesCollection: Collection<Document>;
 let bookingsCollection: Collection<Document>;
 
 // ==========================================
-// JWKS Setup (Next.js / Clerk / Auth0 / custom JWKS endpoint)
+// 🔑 JWKS Setup (Next.js / Clerk / Auth0 / custom JWKS endpoint)
 // ==========================================
 const JWKS = createRemoteJWKSet(
-  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+  new URL(`${process.env.CLIENT_URL}/api/auth/jwks`)
 );
 
 // ==========================================
-// AUTH MIDDLEWARES
+// 🛡️ AUTH MIDDLEWARES
 // ==========================================
 
 const verifyToken = async (
   req: AuthenticatedRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ): Promise<void | Response> => {
   const authorization = req.headers.authorization;
 
@@ -119,12 +119,10 @@ const verifyToken = async (
 const userVerify = (
   req: AuthenticatedRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ): void | Response => {
   if (!req.user || req.user.role !== "user") {
-    return res
-      .status(403)
-      .json({ error: true, message: "Forbidden: Users only" });
+    return res.status(403).json({ error: true, message: "Forbidden: Users only" });
   }
   next();
 };
@@ -132,25 +130,23 @@ const userVerify = (
 const adminVerify = (
   req: AuthenticatedRequest,
   res: Response,
-  next: NextFunction,
+  next: NextFunction
 ): void | Response => {
   if (!req.user || req.user.role !== "admin") {
-    return res
-      .status(403)
-      .json({ error: true, message: "Forbidden: Admins only" });
+    return res.status(403).json({ error: true, message: "Forbidden: Admins only" });
   }
   next();
 };
 
 // ==========================================
-// ROOT ROUTE
+// 🏠 ROOT ROUTE
 // ==========================================
 app.get("/", (req: Request, res: Response) => {
   res.send("GlowUp Salon Booking TS Server is running...");
 });
 
 // ==========================================
-// SERVICES ROUTES (Public & Admin)
+// 💇 SERVICES ROUTES (Public & Admin)
 // ==========================================
 
 // 1. Get All Services — search, filter, sort, pagination
@@ -209,7 +205,7 @@ app.get(
         itemsPerPage: limit,
       },
     });
-  }),
+  })
 );
 
 // 2. Get Single Service Details (Public)
@@ -222,9 +218,7 @@ app.get(
     const service = await servicesCollection.findOne({ _id: new ObjectId(id) });
 
     if (!service) {
-      return res
-        .status(404)
-        .json({ error: true, message: "Service not found" });
+      return res.status(404).json({ error: true, message: "Service not found" });
     }
 
     const relatedServices = await servicesCollection
@@ -233,7 +227,7 @@ app.get(
       .toArray();
 
     res.json({ service, relatedServices });
-  }),
+  })
 );
 
 // 3. Add a New Service (Admin only)
@@ -242,24 +236,13 @@ app.post(
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
-    const {
-      title,
-      category,
-      shortDescription,
-      description,
-      price,
-      duration,
-      rating,
-      image,
-    } = req.body;
+    const { title, category, shortDescription, description, price, duration, rating, image } =
+      req.body;
 
     if (!title || !category || price === undefined || duration === undefined) {
       return res
         .status(400)
-        .json({
-          error: true,
-          message: "title, category, price and duration are required",
-        });
+        .json({ error: true, message: "title, category, price and duration are required" });
     }
 
     const parsedPrice = parseFloat(price);
@@ -268,10 +251,7 @@ app.post(
     if (Number.isNaN(parsedPrice) || Number.isNaN(parsedDuration)) {
       return res
         .status(400)
-        .json({
-          error: true,
-          message: "price and duration must be valid numbers",
-        });
+        .json({ error: true, message: "price and duration must be valid numbers" });
     }
 
     const newService = {
@@ -288,10 +268,84 @@ app.post(
 
     const result = await servicesCollection.insertOne(newService);
     res.status(201).json({ success: true, result });
+  })
+);
+
+// 4. Update an existing Service (Admin only)
+app.patch(
+  "/api/services/:id",
+  verifyToken,
+  adminVerify,
+  asyncHandler(async (req, res) => {
+    const { id } = req.params;
+    if (!validateObjectId(id, res)) return;
+
+    const {
+      title,
+      category,
+      shortDescription,
+      description,
+      price,
+      duration,
+      rating,
+      image,
+    } = req.body;
+
+    // শুধুমাত্র যেসব field আসলে পাঠানো হয়েছে সেগুলোই আপডেট হবে (partial update)
+    const updateFields: Record<string, unknown> = {};
+
+    if (title !== undefined) updateFields.title = title;
+    if (category !== undefined) updateFields.category = category;
+    if (shortDescription !== undefined) updateFields.shortDescription = shortDescription;
+    if (description !== undefined) updateFields.description = description;
+    if (image !== undefined) updateFields.image = image;
+
+    if (price !== undefined) {
+      const parsedPrice = parseFloat(price);
+      if (Number.isNaN(parsedPrice)) {
+        return res.status(400).json({ error: true, message: "price must be a valid number" });
+      }
+      updateFields.price = parsedPrice;
+    }
+
+    if (duration !== undefined) {
+      const parsedDuration = parseInt(duration);
+      if (Number.isNaN(parsedDuration)) {
+        return res.status(400).json({ error: true, message: "duration must be a valid number" });
+      }
+      updateFields.duration = parsedDuration;
+    }
+
+    if (rating !== undefined) {
+      const parsedRating = parseFloat(rating);
+      if (Number.isNaN(parsedRating)) {
+        return res.status(400).json({ error: true, message: "rating must be a valid number" });
+      }
+      updateFields.rating = parsedRating;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res
+        .status(400)
+        .json({ error: true, message: "No valid fields provided to update" });
+    }
+
+    updateFields.updatedAt = new Date();
+
+    const result = await servicesCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields },
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: true, message: "Service not found" });
+    }
+
+    res.json({ success: true, result });
   }),
 );
 
-// 4. Delete a Service (Admin only)
+// 5. Delete a Service (Admin only)
 app.delete(
   "/api/services/:id",
   verifyToken,
@@ -300,11 +354,9 @@ app.delete(
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
-    const result = await servicesCollection.deleteOne({
-      _id: new ObjectId(id),
-    });
+    const result = await servicesCollection.deleteOne({ _id: new ObjectId(id) });
     res.json(result);
-  }),
+  })
 );
 
 // ==========================================
@@ -317,34 +369,18 @@ app.post(
   verifyToken,
   userVerify,
   asyncHandler(async (req, res) => {
-    const {
-      serviceId,
-      customerName,
-      phoneNumber,
-      bookingDate,
-      timeSlot,
-      notes,
-      price,
-    } = req.body;
+    const { serviceId, customerName, phoneNumber, bookingDate, timeSlot, notes, price } =
+      req.body;
 
-    if (
-      !serviceId ||
-      !customerName ||
-      !phoneNumber ||
-      !bookingDate ||
-      !timeSlot
-    ) {
+    if (!serviceId || !customerName || !phoneNumber || !bookingDate || !timeSlot) {
       return res.status(400).json({
         error: true,
-        message:
-          "serviceId, customerName, phoneNumber, bookingDate and timeSlot are required",
+        message: "serviceId, customerName, phoneNumber, bookingDate and timeSlot are required",
       });
     }
 
     if (!ObjectId.isValid(serviceId)) {
-      return res
-        .status(400)
-        .json({ error: true, message: "Invalid serviceId format" });
+      return res.status(400).json({ error: true, message: "Invalid serviceId format" });
     }
 
     const userId = req.user?.sub || req.user?.userId;
@@ -365,12 +401,8 @@ app.post(
     const result = await bookingsCollection.insertOne(bookingData);
     res
       .status(201)
-      .json({
-        success: true,
-        message: "Appointment booked successfully!",
-        result,
-      });
-  }),
+      .json({ success: true, message: "Appointment booked successfully!", result });
+  })
 );
 
 // 2. Get Logged-in User's Bookings (User only)
@@ -393,104 +425,16 @@ app.get(
             as: "serviceDetails",
           },
         },
-        {
-          $unwind: {
-            path: "$serviceDetails",
-            preserveNullAndEmptyArrays: true,
-          },
-        },
+        { $unwind: { path: "$serviceDetails", preserveNullAndEmptyArrays: true } },
       ])
       .toArray();
 
     res.json(result);
-  }),
-);
-
-
-
-// USER DASHBOARD ANALYTICS ROUTE (User Only)
-// ==========================================
-app.get(
-  "/api/user/dashboard-analytics",
-  verifyToken,
-  userVerify,
-  asyncHandler(async (req, res) => {
-    const userId = req.user?.sub || req.user?.userId;
-
-  
-
-    if (!userId) {
-      return res.status(401).json({ error: true, message: "Unauthorized" });
-    }
-
-
-    const totalBookings = await bookingsCollection.countDocuments({ userId });
-    const pendingBookings = await bookingsCollection.countDocuments({ userId, status: "pending" });
-    const completedBookings = await bookingsCollection.countDocuments({ userId, status: "completed" });
-
-    const spentData = await bookingsCollection
-      .aggregate([
-        { $match: { userId, status: "completed" } },
-        { $group: { _id: null, totalSpent: { $sum: "$price" } } },
-      ])
-      .toArray();
-    const totalSpent = spentData[0]?.totalSpent || 0;
-
-    const monthlyExpense = await bookingsCollection
-      .aggregate([
-        { $match: { userId } },
-        {
-          $group: {
-            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
-            amount: { $sum: "$price" },
-            count: { $sum: 1 }
-          },
-        },
-        { $sort: { _id: 1 } },
-        { $project: { month: "$_id", amount: 1, count: 1, _id: 0 } },
-      ])
-      .toArray();
-
-    const categoryAnalysis = await bookingsCollection
-      .aggregate([
-        { $match: { userId } },
-        {
-          $lookup: {
-            from: "services",
-            localField: "serviceId",
-            foreignField: "_id",
-            as: "service"
-          }
-        },
-        { $unwind: "$service" },
-        {
-          $group: {
-            _id: "$service.category",
-            value: { $sum: 1 }
-          }
-        },
-        { $project: { category: "$_id", value: 1, _id: 0 } }
-      ])
-      .toArray();
-
-    
-    res.json({
-      stats: {
-        totalBookings,
-        pendingBookings,
-        completedBookings,
-        totalSpent,
-      },
-      charts: {
-        monthlyExpense,    
-        categoryAnalysis   
-      }
-    });
-  }),
+  })
 );
 
 // ==========================================
-// DASHBOARD ANALYTICS ROUTE (Admin)
+// 📊 DASHBOARD ANALYTICS ROUTE (Admin)
 // ==========================================
 app.get(
   "/api/admin/dashboard-analytics",
@@ -499,9 +443,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const totalServices = await servicesCollection.countDocuments();
     const totalBookings = await bookingsCollection.countDocuments();
-    const totalCustomers = await usersCollection.countDocuments({
-      role: "user",
-    });
+    const totalCustomers = await usersCollection.countDocuments({ role: "user" });
 
     const revenueData = await bookingsCollection
       .aggregate([
@@ -529,11 +471,11 @@ app.get(
       stats: { totalServices, totalBookings, totalRevenue, totalCustomers },
       chartData: monthlyChartData,
     });
-  }),
+  })
 );
 
 // ==========================================
-//  USERS MANAGEMENT ROUTES (Admin)
+// 👥 USERS MANAGEMENT ROUTES (Admin)
 // ==========================================
 
 app.get(
@@ -543,7 +485,7 @@ app.get(
   asyncHandler(async (req, res) => {
     const users = await usersCollection.find().toArray();
     res.json(users);
-  }),
+  })
 );
 
 app.patch(
@@ -556,17 +498,15 @@ app.patch(
 
     const { role } = req.body;
     if (!["user", "admin"].includes(role)) {
-      return res
-        .status(400)
-        .json({ error: true, message: "role must be 'user' or 'admin'" });
+      return res.status(400).json({ error: true, message: "role must be 'user' or 'admin'" });
     }
 
     const result = await usersCollection.updateOne(
       { _id: new ObjectId(id) },
-      { $set: { role, updatedAt: new Date() } },
+      { $set: { role, updatedAt: new Date() } }
     );
     res.json(result);
-  }),
+  })
 );
 
 app.delete(
@@ -579,37 +519,30 @@ app.delete(
 
     const result = await usersCollection.deleteOne({ _id: new ObjectId(id) });
     res.json(result);
-  }),
+  })
 );
 
 // ==========================================
-// 404 HANDLER (unmatched routes)
+// 🚫 404 HANDLER (unmatched routes)
 // ==========================================
 app.use((req: Request, res: Response) => {
   res.status(404).json({ error: true, message: "Route not found" });
 });
 
 // ==========================================
-// CENTRALIZED ERROR HANDLER
+// 💥 CENTRALIZED ERROR HANDLER
 // (every asyncHandler catch lands here)
 // ==========================================
-app.use(
-  (
-    err: Error & { status?: number },
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    console.error("Unhandled Error:", err);
-    res.status(err.status || 500).json({
-      error: true,
-      message: err.message || "Internal Server Error",
-    });
-  },
-);
+app.use((err: Error & { status?: number }, req: Request, res: Response, next: NextFunction) => {
+  console.error("Unhandled Error:", err);
+  res.status(err.status || 500).json({
+    error: true,
+    message: err.message || "Internal Server Error",
+  });
+});
 
 // ==========================================
-// START SERVER (connect DB first, then listen)
+// 🚀 START SERVER (connect DB first, then listen)
 // ==========================================
 async function startServer(): Promise<void> {
   const db = await connectDB();
@@ -626,7 +559,7 @@ async function startServer(): Promise<void> {
 startServer();
 
 // ==========================================
-// GRACEFUL SHUTDOWN
+// 🧹 GRACEFUL SHUTDOWN
 // ==========================================
 process.on("SIGINT", async () => {
   console.log("\nShutting down gracefully...");
