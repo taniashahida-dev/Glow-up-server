@@ -68,7 +68,7 @@ const validateObjectId = (id: unknown, res: Response): id is string => {
 };
 
 // MONGODB COLLECTIONS
-// (populated once connectDB() resolves inside startServer())
+
 
 let usersCollection: Collection<Document>;
 let servicesCollection: Collection<Document>;
@@ -674,6 +674,7 @@ app.use(
 
 // START SERVER (connect DB first, then listen)
 
+// START SERVER (Vercel ও Local দুই জায়গাতেই চলার জন্য)
 async function startServer(): Promise<void> {
   const db = await connectDB();
 
@@ -681,9 +682,12 @@ async function startServer(): Promise<void> {
   servicesCollection = db.collection<Document>("services");
   bookingsCollection = db.collection<Document>("bookings");
 
-  app.listen(port, () => {
-    console.log(`🚀 GlowUp TS Server listening on port ${port}`);
-  });
+  // Vercel-এর বাইরে লোকাল এনভায়রনমেন্টে রান করার জন্য
+  if (process.env.NODE_ENV !== "production") {
+    app.listen(port, () => {
+      console.log(`🚀 GlowUp TS Server listening on port ${port}`);
+    });
+  }
 }
 
 startServer();
