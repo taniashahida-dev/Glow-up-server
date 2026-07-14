@@ -10,13 +10,12 @@ import express, {
 import cors from "cors";
 import { ObjectId, Document, Collection } from "mongodb";
 import { createRemoteJWKSet, jwtVerify, JWTPayload } from "jose-cjs";
-import { connectDB, closeDB } from "./config/db";
+import { connectDB, closeDB, getDB } from "./config/db";
 
 const app = express();
 const port: string | number = process.env.PORT || 8000;
 
 // ENV VALIDATION (fail fast, don't crash mysteriously later)
-
 const requiredEnvVars = ["MONGODB_URI", "DB_NAME", "CLIENT_URL"] as const;
 for (const key of requiredEnvVars) {
   if (!process.env[key]) {
@@ -26,7 +25,6 @@ for (const key of requiredEnvVars) {
 }
 
 //  MIDDLEWARE
-
 app.use(
   cors({
     origin: process.env.CLIENT_URL, // restrict to your frontend only
@@ -36,8 +34,6 @@ app.use(
 app.use(express.json());
 
 //  CUSTOM TYPES
-
-// Custom Request Interface to handle JWT Payload safely
 interface AuthenticatedRequest extends Request {
   user?: JWTPayload & {
     role?: string;
@@ -46,7 +42,6 @@ interface AuthenticatedRequest extends Request {
   };
 }
 
-// Wraps async route handlers so we don't repeat try/catch everywhere
 const asyncHandler =
   (
     fn: (
@@ -67,34 +62,34 @@ const validateObjectId = (id: unknown, res: Response): id is string => {
   return true;
 };
 
-// MONGODB COLLECTIONS
+// 💡 DYNAMIC MONGODB COLLECTION MANAGER (Fixes Serverless Crashing)
+const getCollection = async <T extends Document = Document>(name: string): Promise<Collection<T>> => {
+  try {
+    const db = getDB();
+    return db.collection<T>(name);
+  } catch {
+    const db = await connectDB();
+    return db.collection<T>(name);
+  }
+};
 
-
-let usersCollection: Collection<Document>;
-let servicesCollection: Collection<Document>;
-let bookingsCollection: Collection<Document>;
-
-// JWKS Setup (Next.js / Clerk / Auth0 / custom JWKS endpoint)
-
+// JWKS Setup
 const JWKS = createRemoteJWKSet(
   new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
 );
 
 // AUTH MIDDLEWARES
-
 const verifyToken = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction,
 ): Promise<void | Response> => {
   const authorization = req.headers.authorization;
-
   if (!authorization) {
     return res.status(401).json({ error: true, message: "Unauthorized" });
   }
 
   const token = authorization.split(" ")[1];
-
   if (!token) {
     return res.status(401).json({ error: true, message: "Unauthorized" });
   }
@@ -135,9 +130,7 @@ const adminVerify = (
   next();
 };
 
-// ==========================================
-//  ROOT ROUTE
-// ==========================================
+// ROOT ROUTE
 app.get("/", (req: Request, res: Response) => {
   res.send("GlowUp Salon Booking TS Server is running...");
 });
@@ -146,10 +139,11 @@ app.get("/", (req: Request, res: Response) => {
 //  SERVICES ROUTES (Public & Admin)
 // ==========================================
 
-// 1. Get All Services — search, filter, sort, pagination
+// 1. Get All Services
 app.get(
   "/api/services",
   asyncHandler(async (req, res) => {
+    const servicesCollection = await getCollection("services");
     const search = (req.query.search as string) || "";
     const category = (req.query.category as string) || "";
     const minPrice = parseFloat(req.query.minPrice as string) || 0;
@@ -205,19 +199,17 @@ app.get(
   }),
 );
 
-// 2. Get Single Service Details (Public)
+// 2. Get Single Service Details
 app.get(
   "/api/services/:id",
   asyncHandler(async (req, res) => {
+    const servicesCollection = await getCollection("services");
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
     const service = await servicesCollection.findOne({ _id: new ObjectId(id) });
-
     if (!service) {
-      return res
-        .status(404)
-        .json({ error: true, message: "Service not found" });
+      return res.status(404).json({ error: true, message: "Service not found" });
     }
 
     const relatedServices = await servicesCollection
@@ -229,42 +221,30 @@ app.get(
   }),
 );
 
-// 3. Add a New Service (Admin only)
+// 3. Add a New Service
 app.post(
   "/api/services",
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
-    const {
-      title,
-      category,
-      shortDescription,
-      description,
-      price,
-      duration,
-      rating,
-      image,
-    } = req.body;
+    const servicesCollection = await getCollection("services");
+    const { title, category, shortDescription, description, price, duration, rating, image } = req.body;
 
     if (!title || !category || price === undefined || duration === undefined) {
-      return res
-        .status(400)
-        .json({
-          error: true,
-          message: "title, category, price and duration are required",
-        });
+      return res.status(400).json({
+        error: true,
+        message: "title, category, price and duration are required",
+      });
     }
 
     const parsedPrice = parseFloat(price);
     const parsedDuration = parseInt(duration);
 
     if (Number.isNaN(parsedPrice) || Number.isNaN(parsedDuration)) {
-      return res
-        .status(400)
-        .json({
-          error: true,
-          message: "price and duration must be valid numbers",
-        });
+      return res.status(400).json({
+        error: true,
+        message: "price and duration must be valid numbers",
+      });
     }
 
     const newService = {
@@ -273,7 +253,7 @@ app.post(
       shortDescription,
       description,
       price: parsedPrice,
-      duration: parsedDuration, // in minutes
+      duration: parsedDuration,
       rating: parseFloat(rating) || 5.0,
       image,
       createdAt: new Date(),
@@ -284,41 +264,29 @@ app.post(
   }),
 );
 
-// 4. Update an existing Service (Admin only)
+// 4. Update an existing Service
 app.patch(
   "/api/services/:id",
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const servicesCollection = await getCollection("services");
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
-    const {
-      title,
-      category,
-      shortDescription,
-      description,
-      price,
-      duration,
-      rating,
-      image,
-    } = req.body;
-
+    const { title, category, shortDescription, description, price, duration, rating, image } = req.body;
     const updateFields: Record<string, unknown> = {};
 
     if (title !== undefined) updateFields.title = title;
     if (category !== undefined) updateFields.category = category;
-    if (shortDescription !== undefined)
-      updateFields.shortDescription = shortDescription;
+    if (shortDescription !== undefined) updateFields.shortDescription = shortDescription;
     if (description !== undefined) updateFields.description = description;
     if (image !== undefined) updateFields.image = image;
 
     if (price !== undefined) {
       const parsedPrice = parseFloat(price);
       if (Number.isNaN(parsedPrice)) {
-        return res
-          .status(400)
-          .json({ error: true, message: "price must be a valid number" });
+        return res.status(400).json({ error: true, message: "price must be a valid number" });
       }
       updateFields.price = parsedPrice;
     }
@@ -326,9 +294,7 @@ app.patch(
     if (duration !== undefined) {
       const parsedDuration = parseInt(duration);
       if (Number.isNaN(parsedDuration)) {
-        return res
-          .status(400)
-          .json({ error: true, message: "duration must be a valid number" });
+        return res.status(400).json({ error: true, message: "duration must be a valid number" });
       }
       updateFields.duration = parsedDuration;
     }
@@ -336,17 +302,13 @@ app.patch(
     if (rating !== undefined) {
       const parsedRating = parseFloat(rating);
       if (Number.isNaN(parsedRating)) {
-        return res
-          .status(400)
-          .json({ error: true, message: "rating must be a valid number" });
+        return res.status(400).json({ error: true, message: "rating must be a valid number" });
       }
       updateFields.rating = parsedRating;
     }
 
     if (Object.keys(updateFields).length === 0) {
-      return res
-        .status(400)
-        .json({ error: true, message: "No valid fields provided to update" });
+      return res.status(400).json({ error: true, message: "No valid fields provided to update" });
     }
 
     updateFields.updatedAt = new Date();
@@ -357,67 +319,50 @@ app.patch(
     );
 
     if (result.matchedCount === 0) {
-      return res
-        .status(404)
-        .json({ error: true, message: "Service not found" });
+      return res.status(404).json({ error: true, message: "Service not found" });
     }
 
     res.json({ success: true, result });
   }),
 );
 
-// 5. Delete a Service (Admin only)
+// 5. Delete a Service
 app.delete(
   "/api/services/:id",
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const servicesCollection = await getCollection("services");
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
-    const result = await servicesCollection.deleteOne({
-      _id: new ObjectId(id),
-    });
+    const result = await servicesCollection.deleteOne({ _id: new ObjectId(id) });
     res.json(result);
   }),
 );
 
-// BOOKINGS ROUTES (User & Admin)
+// ==========================================
+//  BOOKINGS ROUTES (User & Admin)
+// ==========================================
 
-// 1. Create Appointment / Booking (User only)
+// 1. Create Appointment / Booking
 app.post(
   "/api/bookings",
   verifyToken,
   userVerify,
   asyncHandler(async (req, res) => {
-    const {
-      serviceId,
-      customerName,
-      phoneNumber,
-      bookingDate,
-      timeSlot,
-      notes,
-      price,
-    } = req.body;
+    const bookingsCollection = await getCollection("bookings");
+    const { serviceId, customerName, phoneNumber, bookingDate, timeSlot, notes, price } = req.body;
 
-    if (
-      !serviceId ||
-      !customerName ||
-      !phoneNumber ||
-      !bookingDate ||
-      !timeSlot
-    ) {
+    if (!serviceId || !customerName || !phoneNumber || !bookingDate || !timeSlot) {
       return res.status(400).json({
         error: true,
-        message:
-          "serviceId, customerName, phoneNumber, bookingDate and timeSlot are required",
+        message: "serviceId, customerName, phoneNumber, bookingDate and timeSlot are required",
       });
     }
 
     if (!ObjectId.isValid(serviceId)) {
-      return res
-        .status(400)
-        .json({ error: true, message: "Invalid serviceId format" });
+      return res.status(400).json({ error: true, message: "Invalid serviceId format" });
     }
 
     const userId = req.user?.sub || req.user?.userId;
@@ -436,22 +381,21 @@ app.post(
     };
 
     const result = await bookingsCollection.insertOne(bookingData);
-    res
-      .status(201)
-      .json({
-        success: true,
-        message: "Appointment booked successfully!",
-        result,
-      });
+    res.status(201).json({
+      success: true,
+      message: "Appointment booked successfully!",
+      result,
+    });
   }),
 );
 
-// 2. Get Logged-in User's Bookings (User only)
+// 2. Get Logged-in User's Bookings
 app.get(
   "/api/bookings/my-bookings",
   verifyToken,
   userVerify,
   asyncHandler(async (req, res) => {
+    const bookingsCollection = await getCollection("bookings");
     const userId = req.user?.sub || req.user?.userId;
 
     const result = await bookingsCollection
@@ -479,18 +423,21 @@ app.get(
   }),
 );
 
-// DASHBOARD ANALYTICS ROUTE (Admin)
-
+// ==========================================
+//  DASHBOARD ANALYTICS ROUTE (Admin)
+// ==========================================
 app.get(
   "/api/admin/dashboard-analytics",
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const servicesCollection = await getCollection("services");
+    const bookingsCollection = await getCollection("bookings");
+    const usersCollection = await getCollection("users");
+
     const totalServices = await servicesCollection.countDocuments();
     const totalBookings = await bookingsCollection.countDocuments();
-    const totalCustomers = await usersCollection.countDocuments({
-      role: "user",
-    });
+    const totalCustomers = await usersCollection.countDocuments({ role: "user" });
 
     const revenueData = await bookingsCollection
       .aggregate([
@@ -505,7 +452,7 @@ app.get(
       .aggregate([
         {
           $group: {
-            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+            id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
             bookings: { $sum: 1 },
           },
         },
@@ -521,9 +468,6 @@ app.get(
   }),
 );
 
-
-
-
 // ==========================================
 // 📊 USER DASHBOARD ANALYTICS ROUTE (User only)
 // ==========================================
@@ -532,6 +476,7 @@ app.get(
   verifyToken,
   userVerify,
   asyncHandler(async (req, res) => {
+    const bookingsCollection = await getCollection("bookings");
     const userId = req.user?.sub || req.user?.userId;
 
     const totalBookings = await bookingsCollection.countDocuments({ userId });
@@ -552,7 +497,7 @@ app.get(
         { $match: { userId } },
         {
           $group: {
-            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+            id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
             amount: { $sum: "$price" },
             count: { $sum: 1 },
           },
@@ -576,37 +521,32 @@ app.get(
         { $unwind: { path: "$serviceDetails", preserveNullAndEmptyArrays: true } },
         {
           $group: {
-            _id: "$serviceDetails.category",
+            id: "$serviceDetails.category",
             value: { $sum: 1 },
           },
         },
-        { $match: { _id: { $ne: null } } }, 
+        { $match: { _id: { $ne: null } } },
         { $project: { category: "$_id", value: 1, _id: 0 } },
         { $sort: { value: -1 } },
       ])
       .toArray();
 
     res.json({
-      stats: {
-        totalBookings,
-        pendingBookings,
-        completedBookings,
-        totalSpent,
-      },
-      charts: {
-        monthlyExpense,
-        categoryAnalysis,
-      },
+      stats: { totalBookings, pendingBookings, completedBookings, totalSpent },
+      charts: { monthlyExpense, categoryAnalysis },
     });
   }),
 );
-//  USERS MANAGEMENT ROUTES (Admin)
 
+// ==========================================
+//  USERS MANAGEMENT ROUTES (Admin)
+// ==========================================
 app.get(
   "/api/users",
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const usersCollection = await getCollection("users");
     const users = await usersCollection.find().toArray();
     res.json(users);
   }),
@@ -617,14 +557,13 @@ app.patch(
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const usersCollection = await getCollection("users");
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
     const { role } = req.body;
     if (!["user", "admin"].includes(role)) {
-      return res
-        .status(400)
-        .json({ error: true, message: "role must be 'user' or 'admin'" });
+      return res.status(400).json({ error: true, message: "role must be 'user' or 'admin'" });
     }
 
     const result = await usersCollection.updateOne(
@@ -640,6 +579,7 @@ app.delete(
   verifyToken,
   adminVerify,
   asyncHandler(async (req, res) => {
+    const usersCollection = await getCollection("users");
     const { id } = req.params;
     if (!validateObjectId(id, res)) return;
 
@@ -648,41 +588,28 @@ app.delete(
   }),
 );
 
-// 404 HANDLER (unmatched routes)
-
+// 404 HANDLER
 app.use((req: Request, res: Response) => {
   res.status(404).json({ error: true, message: "Route not found" });
 });
 
-//  CENTRALIZED ERROR HANDLER
-// (every asyncHandler catch lands here)
+// CENTRALIZED ERROR HANDLER
+app.use((err: Error & { status?: number }, req: Request, res: Response, next: NextFunction) => {
+  console.error("Unhandled Error:", err);
+  res.status(err.status || 500).json({
+    error: true,
+    message: err.message || "Internal Server Error",
+  });
+});
 
-app.use(
-  (
-    err: Error & { status?: number },
-    req: Request,
-    res: Response,
-    next: NextFunction,
-  ) => {
-    console.error("Unhandled Error:", err);
-    res.status(err.status || 500).json({
-      error: true,
-      message: err.message || "Internal Server Error",
-    });
-  },
-);
-
-// START SERVER (connect DB first, then listen)
-
-// START SERVER (Vercel ও Local দুই জায়গাতেই চলার জন্য)
+// START SERVER
 async function startServer(): Promise<void> {
-  const db = await connectDB();
+  try {
+    await connectDB();
+  } catch (err) {
+    console.error("Initial DB connection failed:", err);
+  }
 
-  usersCollection = db.collection<Document>("users");
-  servicesCollection = db.collection<Document>("services");
-  bookingsCollection = db.collection<Document>("bookings");
-
-  // Vercel-এর বাইরে লোকাল এনভায়রনমেন্টে রান করার জন্য
   if (process.env.NODE_ENV !== "production") {
     app.listen(port, () => {
       console.log(`🚀 GlowUp TS Server listening on port ${port}`);
@@ -691,8 +618,6 @@ async function startServer(): Promise<void> {
 }
 
 startServer();
-
-// GRACEFUL SHUTDOWN
 
 process.on("SIGINT", async () => {
   console.log("\nShutting down gracefully...");
