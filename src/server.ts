@@ -433,18 +433,31 @@ app.get(
   asyncHandler(async (req, res) => {
     const servicesCollection = await getCollection("services");
     const bookingsCollection = await getCollection("bookings");
-    const usersCollection = await getCollection("users");
+    let usersCollection;
+    
+    // safe collection fetching
+    try {
+      usersCollection = await getCollection("users");
+    } catch (e) {
+      console.warn("Users collection not available:", e);
+    }
 
-    const totalServices = await servicesCollection.countDocuments();
-    const totalBookings = await bookingsCollection.countDocuments();
-    const totalCustomers = await usersCollection.countDocuments({ role: "user" });
+    const totalServices = await servicesCollection.countDocuments().catch(() => 0);
+    const totalBookings = await bookingsCollection.countDocuments().catch(() => 0);
+    
+    // safe check count of users
+    let totalCustomers = 0;
+    if (usersCollection) {
+      totalCustomers = await usersCollection.countDocuments({ role: "user" }).catch(() => 0);
+    }
 
     const revenueData = await bookingsCollection
       .aggregate([
         { $match: { status: "completed" } },
         { $group: { _id: null, totalRevenue: { $sum: "$price" } } },
       ])
-      .toArray();
+      .toArray()
+      .catch(() => []);
 
     const totalRevenue = revenueData[0]?.totalRevenue || 0;
 
@@ -452,14 +465,16 @@ app.get(
       .aggregate([
         {
           $group: {
-            id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+            // "bookingDate" ফিল্ডটি টাইপ 'Date' কিনা তা নিশ্চিত করার জন্য safe aggregation
+            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
             bookings: { $sum: 1 },
           },
         },
         { $sort: { _id: 1 } },
         { $project: { month: "$_id", bookings: 1, _id: 0 } },
       ])
-      .toArray();
+      .toArray()
+      .catch(() => []);
 
     res.json({
       stats: { totalServices, totalBookings, totalRevenue, totalCustomers },
@@ -479,25 +494,29 @@ app.get(
     const bookingsCollection = await getCollection("bookings");
     const userId = req.user?.sub || req.user?.userId;
 
-    const totalBookings = await bookingsCollection.countDocuments({ userId });
-    const pendingBookings = await bookingsCollection.countDocuments({ userId, status: "pending" });
-    const completedBookings = await bookingsCollection.countDocuments({ userId, status: "completed" });
+    const totalBookings = await bookingsCollection.countDocuments({ userId }).catch(() => 0);
+    const pendingBookings = await bookingsCollection.countDocuments({ userId, status: "pending" }).catch(() => 0);
+    const completedBookings = await bookingsCollection.countDocuments({ userId, status: "completed" }).catch(() => 0);
 
+    // safe expense aggregation
     const expenseAggregation = await bookingsCollection
       .aggregate([
         { $match: { userId, status: "completed" } },
         { $group: { _id: null, totalSpent: { $sum: "$price" } } },
       ])
-      .toArray();
+      .toArray()
+      .catch(() => []);
 
     const totalSpent = expenseAggregation[0]?.totalSpent || 0;
 
+    // safe monthly expense aggregation
     const monthlyExpense = await bookingsCollection
       .aggregate([
         { $match: { userId } },
         {
           $group: {
-            id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
+            // "bookingDate" ফিল্ডটি টাইপ 'Date' কিনা তা নিশ্চিত করার জন্য safe aggregation
+            _id: { $dateToString: { format: "%Y-%m", date: "$bookingDate" } },
             amount: { $sum: "$price" },
             count: { $sum: 1 },
           },
@@ -505,8 +524,10 @@ app.get(
         { $sort: { _id: 1 } },
         { $project: { month: "$_id", amount: 1, count: 1, _id: 0 } },
       ])
-      .toArray();
+      .toArray()
+      .catch(() => []);
 
+    // safe category analysis
     const categoryAnalysis = await bookingsCollection
       .aggregate([
         { $match: { userId } },
@@ -521,7 +542,7 @@ app.get(
         { $unwind: { path: "$serviceDetails", preserveNullAndEmptyArrays: true } },
         {
           $group: {
-            id: "$serviceDetails.category",
+            _id: "$serviceDetails.category",
             value: { $sum: 1 },
           },
         },
@@ -529,7 +550,8 @@ app.get(
         { $project: { category: "$_id", value: 1, _id: 0 } },
         { $sort: { value: -1 } },
       ])
-      .toArray();
+      .toArray()
+      .catch(() => []);
 
     res.json({
       stats: { totalBookings, pendingBookings, completedBookings, totalSpent },
