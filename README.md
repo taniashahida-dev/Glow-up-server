@@ -12,10 +12,7 @@ This backend powers the **GlowUp Salon Booking System**, providing REST APIs for
 [![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb&logoColor=white)](https://www.mongodb.com/)
 [![JWT](https://img.shields.io/badge/JWT-black?style=for-the-badge&logo=JSON%20web%20tokens)](https://jwt.io/)
 
-![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)
-![API](https://img.shields.io/badge/API-REST-orange?style=flat-square)
-![PRs](https://img.shields.io/badge/PRs-Welcome-blueviolet?style=flat-square)
+
 
 </div>
 
