@@ -269,7 +269,7 @@ Errors are handled in two layers:
 
 <div align="center">
 
-Made with ❤️ by **Tania Shahida**
+Made with ❤️ by **Tania**
 
 ⭐ Don't forget to star this repo if you found it helpful!
 
